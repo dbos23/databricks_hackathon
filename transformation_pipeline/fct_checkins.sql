@@ -1,4 +1,4 @@
-create or refresh materialized view silver.fct_checkins as (
+create or refresh materialized view genieology.silver.fct_checkins as (
 
     with
 
