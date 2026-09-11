@@ -1,4 +1,6 @@
-create or refresh materialized view genieology.silver.fct_checkins as (
+create or refresh materialized view genieology.silver.fct_checkins
+tblproperties (delta.enableRowTracking = true)
+as (
 
     with
 
