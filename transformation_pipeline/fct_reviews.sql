@@ -3,7 +3,7 @@ create or refresh materialized view genieology.silver.fct_reviews as (
     select
         review_id,
         business_id,
-        date::timestamp as review_timestamp,
+        date::timestamp as posted_at,
         stars as rating,
         text as review_text,
         cool as cool_count,
