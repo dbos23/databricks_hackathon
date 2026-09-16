@@ -5,7 +5,7 @@ create or replace materialized view genieology.gold.reviews_and_tips as (
         fct_reviews.business_id,
         'review' as type,
         posted_at,
-        review_text as full_text
+        fct_reviews.rating::string || '/5 stars. ' || review_text as full_text
     from genieology.silver.fct_reviews
         inner join genieology.gold.business
                 on fct_reviews.business_id = business.business_id
