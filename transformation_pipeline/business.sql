@@ -2,6 +2,7 @@ create or refresh materialized view genieology.gold.business as (
     select
         dim_business.business_id,
         dim_business.business_name,
+        dim_business.category,
         dim_business.subcategories,
         dim_business.city,
         dim_business.state,
@@ -17,4 +18,5 @@ create or refresh materialized view genieology.gold.business as (
     from genieology.silver.dim_business
         left join genieology.silver.fct_checkins
             on dim_business.business_id = fct_checkins.business_id
+    where dim_business.confidence_score >= .7
 );
