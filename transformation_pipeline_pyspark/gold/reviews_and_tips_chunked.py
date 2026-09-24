@@ -17,7 +17,7 @@ def reviews_and_tips_chunked():
     )
 
     return (
-        spark.read.table('genieology.gold.reviews_and_tips')
+        spark.read.table('genieology.gold_pyspark.reviews_and_tips')
         .filter(F.col('full_text').isNotNull() & (text_len > 0))
         .withColumn('chunk_id', F.explode(F.sequence(F.lit(0), num_chunks - 1)))
         .withColumn('text_chunk', F.col('full_text').substr(F.col('chunk_id') * step + 1, F.lit(chunk_size)))
