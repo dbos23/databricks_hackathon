@@ -1,0 +1,11 @@
+command:
+  - python
+  - app_v3.py
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "401941d60f2786b9"
+resources:
+  - name: sql-warehouse
+    sql_warehouse:
+      id: "401941d60f2786b9"
+      permission: CAN_USE
