@@ -1,3 +1,15 @@
+# Blanche Lifestyle Magazine: Yelp business dashboard
+#
+# A Dash app that loads Yelp business data from a Databricks SQL warehouse and
+# shows it as KPI cards, a map, top-10 bar charts and a feed of reviews and tips.
+# Everything on the page follows the same sidebar filters. Selecting a business
+# (by clicking the map or a bar, or through the picker dropdown) narrows the
+# page to that business and opens a detail panel. The "Ask Genie" panel sends
+# plain-language questions to a Databricks Genie space.
+#
+# Configuration: DATABRICKS_WAREHOUSE_ID (optional). Databricks credentials are
+# picked up by WorkspaceClient from the environment or Databricks config.
+
 import os
 import re
 import dash
@@ -8,46 +20,51 @@ import numpy as np
 import time
 from databricks.sdk import WorkspaceClient
 
+# ── Databricks connection ──
+# SQL warehouse used for every query. Falls back to a default ID if the
+# environment variable isn't set.
 WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "401941d60f2786b9")
 w = WorkspaceClient()
 
 
-# ── Theme: warm cream & mauve ──
-# TEXT_LIGHT and ACCENT were darkened slightly so they pass WCAG AA (4.5:1) on
-# white, the cream page background, and HIGHLIGHT_BG.
-BG = "#F7F3EF"
-CARD = "#FFFFFF"
-BORDER = "#DCD4D9"
-PRIMARY = "#5B4A5E"
-TEXT_DARK = "#2D1F30"
-TEXT_MED = "#6B5B6E"
-TEXT_LIGHT = "#736676"   # was #9B8E9E (3.1:1 on white)
-ACCENT = "#80606D"       # was #8B6B78 (3.9:1 on HIGHLIGHT_BG)
-HIGHLIGHT_BG = "#F0EAE6"
+# ── Theme: warm cream and mauve ──
+# Every text color meets WCAG AA contrast (4.5:1) against white, the cream page
+# background (BG) and HIGHLIGHT_BG.
+BG = "#F7F3EF"           # page background
+CARD = "#FFFFFF"         # cards and panels
+BORDER = "#DCD4D9"       # card borders and dividers
+PRIMARY = "#5B4A5E"      # header, buttons, selected items
+TEXT_DARK = "#2D1F30"    # headings and main text
+TEXT_MED = "#6B5B6E"     # body text
+TEXT_LIGHT = "#736676"   # labels and secondary text
+ACCENT = "#80606D"       # ratings, highlights, disclosure arrows
+HIGHLIGHT_BG = "#F0EAE6" # chat background and code blocks
 
-MAP_STYLE = "carto-positron"
+MAP_STYLE = "carto-positron"  # light, low-detail basemap
 
-# Category colors for the map. The old palette was fifteen near-identical mauves,
-# so categories could only be told apart by hovering. These are muted enough to
-# sit with the theme but distinct in hue, and each has at least 3:1 contrast
-# against the light basemap.
+# One color per category on the map. Muted to suit the theme but clearly
+# different in hue, so categories can be told apart without hovering. Each has
+# at least 3:1 contrast against the basemap. Colors repeat after 15 categories.
 CATEGORY_PALETTE = [
     "#5B4A5E", "#B5673F", "#3F7A74", "#A07F2A", "#6B7F3A",
     "#4A6A8F", "#A04F63", "#8C6440", "#5F87A6", "#8F6BA0",
     "#4F7050", "#B0706F", "#2F5560", "#9A5E88", "#7A7A52",
 ]
 
+# Font stacks. Inter and DM Serif Display are loaded from Google Fonts in
+# app.index_string below.
 SANS = "'Inter', -apple-system, sans-serif"
 SERIF = "'DM Serif Display', serif"
 
-# Smallest text size used anywhere is 12px (was 9–11px).
+# ── Shared styles ──
+# The smallest text anywhere in the app is 12px.
 SECTION_HEADING_STYLE = {
     "color": TEXT_LIGHT, "fontSize": "12px", "fontWeight": "600",
     "letterSpacing": "1.5px", "textTransform": "uppercase",
     "margin": "0 0 8px", "fontFamily": SANS,
 }
-# Selected-business panel: one fixed width no matter how long the name or
-# subcategory list is. Long words wrap inside it instead of stretching it.
+# Selected-business panel. The width is fixed so a long name or subcategory
+# list wraps inside the panel instead of stretching it.
 DETAIL_PANEL_WIDTH = "280px"
 DETAIL_PANEL_STYLE = {
     "flex": f"0 0 {DETAIL_PANEL_WIDTH}", "width": DETAIL_PANEL_WIDTH,
@@ -55,8 +72,10 @@ DETAIL_PANEL_STYLE = {
     "background": CARD, "border": f"1px solid {BORDER}", "borderRadius": "4px",
     "padding": "20px", "overflowWrap": "anywhere", "wordBreak": "break-word",
 }
+# Same panel, hidden. Used when no business is selected.
 DETAIL_PANEL_HIDDEN = dict(DETAIL_PANEL_STYLE, display="none")
 
+# Label above each sidebar filter.
 FIELD_LABEL_STYLE = {
     "color": TEXT_MED, "fontSize": "12px", "fontWeight": "500", "display": "block",
     "marginBottom": "4px", "textTransform": "uppercase", "letterSpacing": "0.5px",
@@ -64,7 +83,15 @@ FIELD_LABEL_STYLE = {
 }
 
 
+# ── Data loading ──
+
 def run_query(sql_text: str) -> pd.DataFrame:
+    """Run a SQL statement on the warehouse and return the rows as a DataFrame.
+
+    Waits up to 50 seconds for results. Raises RuntimeError if the query fails
+    or returns no schema. Values come back as strings, so callers convert
+    numeric columns themselves.
+    """
     resp = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID, statement=sql_text, wait_timeout="50s"
     )
@@ -77,6 +104,8 @@ def run_query(sql_text: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+# Load every business once at startup. All filtering after this happens in
+# pandas; only reviews are queried live.
 print("Loading business data ...")
 df = run_query("""
     SELECT business_id, business_name, category, subcategories,
@@ -86,11 +115,15 @@ df = run_query("""
 """)
 print(f"Loaded {len(df):,} businesses")
 
+# Convert numeric columns from strings. Missing coordinates and ratings stay
+# NaN; missing counts become 0.
 for c in ["latitude", "longitude", "rating"]:
     df[c] = pd.to_numeric(df[c], errors="coerce")
 for c in ["review_count", "checkin_count"]:
     df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
 
+# Options for the filter dropdowns, plus a fixed category-to-color mapping so
+# each category keeps the same map color whatever the filters are.
 CATEGORIES = sorted(df["category"].dropna().unique())
 CITIES = sorted(df["city"].dropna().unique())
 STATES = sorted(df["state"].dropna().unique())
@@ -98,8 +131,11 @@ CAT_COLORS = {cat: CATEGORY_PALETTE[i % len(CATEGORY_PALETTE)] for i, cat in enu
 
 
 def parse_subcategories(series: pd.Series) -> list:
-    """Subcategories are stored as a comma-separated string per row; explode into
-    a flat, deduplicated, sorted list of individual subcategory values."""
+    """Return every distinct subcategory, sorted.
+
+    Each row stores its subcategories as one comma-separated string, so this
+    splits them apart. Used to build the Subcategory filter options.
+    """
     values = set()
     for v in series.dropna():
         for piece in str(v).split(","):
@@ -110,6 +146,7 @@ def parse_subcategories(series: pd.Series) -> list:
 
 
 def row_has_subcategory(value, wanted: set) -> bool:
+    """True if a row's comma-separated subcategories include any in `wanted`."""
     if pd.isna(value) or not value:
         return False
     items = {s.strip() for s in str(value).split(",")}
@@ -118,11 +155,15 @@ def row_has_subcategory(value, wanted: set) -> bool:
 
 SUBCATEGORIES = parse_subcategories(df["subcategories"])
 
+
+# ── Genie ──
+
 GENIE_SPACE_ID = "01f1b8f39ea115aabb24013a946478b9"
 
 
 def _poll_genie_message(conv_id: str, msg_id: str, timeout: int = 120):
-    """Poll Genie until the message reaches a terminal status."""
+    """Check the message every 2 seconds until it completes, fails or is
+    cancelled. After `timeout` seconds, return it in whatever state it's in."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         msg = w.genie.get_message(GENIE_SPACE_ID, conv_id, msg_id)
@@ -130,13 +171,18 @@ def _poll_genie_message(conv_id: str, msg_id: str, timeout: int = 120):
         if any(s in status for s in ("COMPLETED", "FAILED", "CANCELLED")):
             return msg
         time.sleep(2)
-    return msg  # return whatever we have on timeout
+    return msg
 
 
 def ask_genie(question: str, conv_id: str | None = None):
-    """Send a question to the Genie space and return structured results.
+    """Ask Genie a question and return its answer.
 
-    Returns (conv_id, answer_text, sql, result_rows, result_cols).
+    Continues conversation `conv_id` if given, so follow-up questions keep
+    context; otherwise starts a new conversation.
+
+    Returns (conv_id, answer_text, sql, result_rows, result_cols). result_rows
+    is capped at 50. This never raises: errors are returned as the answer text
+    so they appear in the chat.
     """
     try:
         if conv_id:
@@ -144,20 +190,23 @@ def ask_genie(question: str, conv_id: str | None = None):
         else:
             resp = w.genie.start_conversation(GENIE_SPACE_ID, question)
 
-        # Handle Wait-style vs direct return
+        # Depending on the SDK version, the call returns either a Wait object
+        # or the message itself. Unwrap the Wait object.
         if hasattr(resp, "bind"):
-            resp = resp.result()  # Wait object
+            resp = resp.result()
 
+        # The IDs live under different attribute names in different SDK versions.
         cid = getattr(resp, "conversation_id", None) or conv_id
         mid = getattr(resp, "message_id", None) or getattr(resp, "id", None)
 
-        # Poll until terminal
+        # Wait for Genie to finish before reading the answer.
         if mid and cid:
             msg = _poll_genie_message(cid, mid)
         else:
             msg = resp
 
-        # Extract answer text and SQL from attachments
+        # An answer can have a text attachment, a query attachment (the SQL
+        # Genie generated), or both.
         answer_text = ""
         sql = ""
         attachments = getattr(msg, "attachments", None) or []
@@ -168,7 +217,7 @@ def ask_genie(question: str, conv_id: str | None = None):
                 q = att.query
                 sql = getattr(q, "query", "") or getattr(q, "sql", "") or ""
 
-        # Fetch query result rows if available
+        # If Genie ran a query, fetch its result rows for the results table.
         result_rows, result_cols = [], []
         if sql and mid and cid:
             try:
@@ -187,8 +236,9 @@ def ask_genie(question: str, conv_id: str | None = None):
                                     result_rows = [list(r) for r in res.data_array[:50]]
                             break
             except Exception:
-                pass  # query result fetch is best-effort
+                pass  # The table is optional; the text answer still shows if this fails.
 
+        # Fall back to a generic message if Genie returned no text.
         answer_text = answer_text.strip() or ("Here are the results:" if result_rows else "I couldn't find an answer.")
         return cid, answer_text, sql.strip(), result_rows, result_cols
 
@@ -196,16 +246,21 @@ def ask_genie(question: str, conv_id: str | None = None):
         return conv_id, f"Sorry, something went wrong: {e}", "", [], []
 
 
-# ── Small accessibility helpers ──
+# ── Accessibility helpers ──
 
 def sr_only(text):
-    """Text that screen readers announce but that isn't shown on screen."""
+    """Text that screen readers announce but that isn't shown on screen.
+    Styled by the .sr-only class in app.index_string."""
     return html.Span(text, className="sr-only")
 
 
 def rating_children(value):
-    """'4.5 ★' visually, 'Rated 4.5 out of 5' to a screen reader
-    (instead of 'four point five black star')."""
+    """Show a rating as '4.5 ★' on screen, while screen readers hear
+    'Rated 4.5 out of 5' instead of 'four point five black star'.
+
+    Returns a list of children to put inside another element, or
+    ['No rating'] if the value isn't a number.
+    """
     try:
         r = f"{float(value):.1f}"
     except (ValueError, TypeError):
@@ -216,15 +271,20 @@ def rating_children(value):
 
 
 def section_heading(text, id_=None, level=2, extra_style=None):
+    """An h2 (or h3 with level=3) in the section heading style. Give it an
+    id_ so its section can point to it with aria-labelledby."""
     style = dict(SECTION_HEADING_STYLE, **(extra_style or {}))
     tag = html.H2 if level == 2 else html.H3
     return tag(text, id=id_, style=style) if id_ else tag(text, style=style)
 
 
 def filter_field(label, control_id, control):
-    """A labeled filter. html.Label's htmlFor connects directly to text inputs;
-    the role=group + aria-labelledby wrapper names the dropdowns, whose inner
-    input isn't directly addressable from Dash."""
+    """A filter control with a visible label above it.
+
+    htmlFor links the label to plain text inputs. Dash dropdowns don't expose
+    the id of their inner input, so the wrapper also gets role=group and
+    aria-labelledby, which names the dropdown for screen readers.
+    """
     label_id = f"{control_id}-label"
     return html.Div(
         role="group", style={"marginBottom": "14px"},
@@ -235,7 +295,8 @@ def filter_field(label, control_id, control):
 
 
 def data_table(cols, rows, caption, max_rows=None):
-    """A real HTML table with a caption and column-scoped headers."""
+    """A proper HTML table with a screen-reader caption and column headers
+    marked scope=col. Pass max_rows to show only the first N rows."""
     shown = rows[:max_rows] if max_rows else rows
     th_style = {"padding": "6px 10px", "fontSize": "12px", "fontWeight": "600",
                 "color": TEXT_DARK, "borderBottom": f"2px solid {BORDER}",
@@ -252,24 +313,31 @@ def data_table(cols, rows, caption, max_rows=None):
     )
 
 
+# ── Chat rendering ──
+
+# Matches **bold** markdown in Genie's answers.
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 
 
 def render_bold(text: str):
-    """Turn **text** into bold. Everything else stays plain text (not parsed as
-    HTML), so Genie output can't inject markup."""
+    """Render **text** as bold and keep everything else as plain strings.
+
+    Genie's text is never parsed as HTML, so it can't inject markup.
+    """
+    # With one capture group, re.split returns plain and bold pieces in turn:
+    # plain at even indexes, bold at odd ones.
     parts = BOLD_RE.split(text)
-    # re.split with one capture group alternates: plain, bold, plain, bold, ...
     return [html.Strong(part, style={"color": TEXT_DARK, "fontWeight": "700"}) if i % 2 else part
             for i, part in enumerate(parts) if part]
 
 
 def strip_bold(text: str) -> str:
-    """Remove ** markers, e.g. for the screen-reader announcement."""
+    """Remove the ** markers, e.g. for the plain-text screen-reader announcement."""
     return BOLD_RE.sub(r"\1", text)
 
 
 def _render_user_bubble(text: str):
+    """Right-aligned chat bubble for a question the user asked."""
     return html.Div(style={"display": "flex", "justifyContent": "flex-end",
                             "marginBottom": "12px"}, children=[
         html.Div([sr_only("You asked: "), text], style={
@@ -281,7 +349,11 @@ def _render_user_bubble(text: str):
 
 
 def _render_genie_bubble(msg: dict):
-    """Render a Genie response bubble from a history dict."""
+    """Left-aligned chat bubble for a Genie answer, built from a history entry.
+
+    Shows the answer text, the generated SQL in a collapsed section, and the
+    query results as a table (first 25 rows), each only when present.
+    """
     children = [
         html.P("Genie", style={"color": ACCENT, "fontWeight": "600",
                 "fontSize": "12px", "margin": "0 0 6px",
@@ -293,6 +365,7 @@ def _render_genie_bubble(msg: dict):
                     "margin": "0 0 8px", "fontFamily": SANS, "lineHeight": "1.5",
                     "whiteSpace": "pre-wrap"}))
     if msg.get("sql"):
+        # The SQL block scrolls sideways, so tabIndex makes it reachable by keyboard.
         children.append(
             html.Details(style={"marginBottom": "8px"}, children=[
                 html.Summary("SQL query", className="disclosure",
@@ -306,6 +379,7 @@ def _render_genie_bubble(msg: dict):
                     "border": f"1px solid {BORDER}"}),
             ]))
     if msg.get("cols") and msg.get("rows"):
+        # Show at most 25 rows, with a note when there are more.
         total = len(msg["rows"])
         overflow_note = (
             html.P(f"Showing 25 of {total} rows",
@@ -331,14 +405,17 @@ def _render_genie_bubble(msg: dict):
 
 
 def _render_history(history):
-    """Render the whole chat history as bubbles."""
+    """Render the whole chat history as bubbles, oldest first."""
     return [
         _render_user_bubble(e["text"]) if e["role"] == "user" else _render_genie_bubble(e)
         for e in history
     ]
 
 
+# ── Cards ──
+
 def kpi_card(label, value, subtitle=""):
+    """Summary card with a small label, a large value and an optional subtitle."""
     return html.Div([
         html.P(label, style={"color": TEXT_LIGHT, "fontSize": "12px", "margin": "0 0 6px",
                               "textTransform": "uppercase", "letterSpacing": "1.5px",
@@ -353,6 +430,8 @@ def kpi_card(label, value, subtitle=""):
 
 
 def highlight_card(label, name, detail):
+    """Card naming one standout business. A long name is cut off with an
+    ellipsis; the full name shows as a tooltip."""
     return html.Div([
         html.P(label, style={"color": TEXT_LIGHT, "fontSize": "12px", "textTransform": "uppercase",
                               "letterSpacing": "1.5px", "margin": "0 0 6px", "fontFamily": SANS,
@@ -367,7 +446,12 @@ def highlight_card(label, name, detail):
 
 
 def review_card(row):
-    """Build an expandable card for a single review or tip."""
+    """Expandable card for one review or tip.
+
+    Collapsed, it shows the business name, a Review/Tip badge, the rating, the
+    first 160 characters and the date. Expanded, it adds the full text, the
+    city and the category.
+    """
     full_text = str(row["full_text"]) if pd.notna(row["full_text"]) else ""
     preview = full_text[:160] + ("\u2026" if len(full_text) > 160 else "")
     posted = row["posted_at"].strftime("%b %d, %Y") if pd.notna(row["posted_at"]) else ""
@@ -380,6 +464,7 @@ def review_card(row):
         "background": CARD, "border": f"1px solid {BORDER}", "borderRadius": "4px",
         "marginBottom": "8px",
     }, children=[
+        # Collapsed view
         html.Summary(className="disclosure", style={
             "padding": "16px 20px", "display": "flex",
             "alignItems": "flex-start", "gap": "12px",
@@ -405,6 +490,7 @@ def review_card(row):
                 "color": TEXT_LIGHT, "fontSize": "12px",
                 "whiteSpace": "nowrap", "fontFamily": SANS, "paddingTop": "2px"}),
         ]),
+        # Expanded view
         html.Div(style={"padding": "0 20px 16px", "borderTop": f"1px solid {BORDER}"}, children=[
             html.P(full_text, style={"color": TEXT_DARK, "fontSize": "14px",
                     "lineHeight": "1.7", "margin": "16px 0 12px", "fontFamily": SANS,
@@ -419,8 +505,15 @@ def review_card(row):
     ])
 
 
+# ── Filtering and charts ──
+
 def apply_filters(name_query, categories, subcategories, cities, states, min_rating, min_reviews):
-    """Apply sidebar filters to the business DataFrame."""
+    """Return the businesses that match the sidebar filters.
+
+    Empty filters are skipped. The name search is a case-insensitive substring
+    match. The rating and review minimums are skipped at their defaults
+    (1 star, 0 reviews).
+    """
     filtered = df.copy()
     if name_query and name_query.strip():
         filtered = filtered[filtered["business_name"].str.contains(
@@ -442,8 +535,13 @@ def apply_filters(name_query, categories, subcategories, cities, states, min_rat
 
 
 def build_bar_chart(data, x_col, hover_fmt, selected_id=None):
-    """Create a themed horizontal bar chart with optional cross-filter highlight."""
+    """Horizontal bar chart with one bar per business, sized by x_col.
+
+    The business_id is the first custom_data value, so clicking a bar can
+    select that business. If selected_id is among the bars, it is highlighted.
+    """
     data = data.copy()
+    # Shorten long names so the axis labels don't crowd the chart.
     data["_label"] = data["business_name"].apply(
         lambda x: (str(x)[:28] + "\u2026") if len(str(x)) > 28 else str(x))
 
@@ -451,8 +549,8 @@ def build_bar_chart(data, x_col, hover_fmt, selected_id=None):
                  custom_data=["business_id", "business_name", "rating", "review_count", "checkin_count"])
 
     if selected_id and selected_id in data["business_id"].values:
-        # Selected bar: dark fill plus an outline, so it's marked by shape and
-        # not only by color. Others stay visible instead of fading to near-white.
+        # The selected bar gets a dark fill and an outline, so it stands out by
+        # shape as well as color. The other bars turn light gray but stay visible.
         colors = [PRIMARY if bid == selected_id else "#C9BCC4" for bid in data["business_id"]]
         line_w = [2 if bid == selected_id else 0 for bid in data["business_id"]]
     else:
@@ -479,7 +577,8 @@ def build_bar_chart(data, x_col, hover_fmt, selected_id=None):
 
 
 def chart_data_table(data, value_col, value_label, caption):
-    """Text version of a bar chart, largest value first."""
+    """Table version of a bar chart, largest value first. Gives screen reader
+    and keyboard users the same data the chart shows."""
     rows = []
     for _, r in data.sort_values(value_col, ascending=False).iterrows():
         rating = f"{r['rating']:.1f}" if pd.notna(r["rating"]) else "N/A"
@@ -496,16 +595,17 @@ def chart_data_table(data, value_col, value_label, caption):
 
 
 def chart_card(title, heading_id, graph_id, table_id, summary):
-    """A chart with a heading, a screen-reader description, and a
-    'view as table' disclosure that works for everyone."""
+    """Chart panel: a heading, the graph, and a 'View as table' section with
+    the same data. The table is filled in by the update_charts callback."""
     return html.Section(
         style={"flex": "1 1 300px", "background": CARD, "border": f"1px solid {BORDER}",
                "borderRadius": "4px", "padding": "16px", "minWidth": "0"},
         **{"aria-labelledby": heading_id},
         children=[
             section_heading(title, heading_id, level=3),
-            # role=img collapses Plotly's SVG (which reads as noise) into one
-            # described image; the table below carries the actual data.
+            # Plotly's SVG is unreadable to screen readers, so role=img presents
+            # the chart as a single image described by `summary`. The table
+            # below carries the actual numbers.
             html.Div(role="img", **{"aria-label": summary}, children=[
                 dcc.Graph(id=graph_id, config={"displayModeBar": False},
                           style={"height": "320px"}),
@@ -520,9 +620,13 @@ def chart_card(title, heading_id, graph_id, table_id, summary):
     )
 
 
+# ── App ──
+
 app = dash.Dash(__name__, title="Blanche Lifestyle Magazine")
 app.config.suppress_callback_exceptions = True
 
+# Page template: sets the page language, loads the fonts and holds the global
+# CSS. Hex values in the CSS match the theme constants at the top of the file.
 app.index_string = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -534,24 +638,25 @@ app.index_string = """<!DOCTYPE html>
     <style>
         body { margin: 0; background: #F7F3EF; }
 
-        /* Screen-reader-only text */
+        /* Text for screen readers only (see sr_only() in the Python) */
         .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0;
                    margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
                    white-space: nowrap; border: 0; }
 
-        /* Skip link: hidden until a keyboard user tabs to it */
+        /* Skip link: off screen until a keyboard user tabs to it */
         .skip-link { position: absolute; left: -9999px; top: 12px; z-index: 1000;
                      background: #FFFFFF; color: #5B4A5E; padding: 10px 16px;
                      font-family: 'Inter', sans-serif; font-weight: 600; border-radius: 4px;
                      border: 2px solid #5B4A5E; text-decoration: none; }
         .skip-link:focus { left: 16px; }
 
-        /* Visible keyboard focus everywhere */
+        /* Visible keyboard focus everywhere (white on the dark header) */
         :focus-visible { outline: 3px solid #5B4A5E; outline-offset: 2px; }
         header :focus-visible { outline-color: #FFFFFF; }
         .Select.is-focused > .Select-control { border-color: #5B4A5E !important;
                      box-shadow: 0 0 0 3px rgba(91, 74, 94, 0.45) !important; }
 
+        /* Dropdown theming (Dash dropdowns use react-select's .Select classes) */
         .Select-control { background-color: #FFFFFF !important; border-color: #B9ADB5 !important; color: #2D1F30 !important; border-radius: 2px !important; }
         .Select-menu-outer { background-color: #FFFFFF !important; border-color: #DCD4D9 !important; }
         .VirtualizedSelectOption { background-color: #FFFFFF; color: #2D1F30; }
@@ -566,12 +671,17 @@ app.index_string = """<!DOCTYPE html>
         .Select.is-open > .Select-control .Select-arrow { border-color: transparent transparent #736676 !important; }
         .Select-clear { color: #736676 !important; }
         .Select-noresults { color: #736676; background: #FFFFFF; }
+
+        /* Placeholders and scrollbars */
         input::placeholder { color: #736676; opacity: 1; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #F7F3EF; }
         ::-webkit-scrollbar-thumb { background: #B9ADB5; border-radius: 4px; }
 
-        /* Disclosures: keep a visible open/closed marker (was hidden) */
+        /* Expandable sections: the browser's default marker is replaced with a
+           right/down arrow. The second `content` line gives the arrow empty alt
+           text so screen readers skip it; the first is a fallback for browsers
+           that don't support that syntax. */
         details > summary { list-style: none; cursor: pointer; }
         details > summary::-webkit-details-marker { display: none; }
         summary.disclosure::before { content: "\\25B8"; content: "\\25B8" / ""; color: #80606D;
@@ -579,7 +689,7 @@ app.index_string = """<!DOCTYPE html>
         details[open] > summary.disclosure::before { content: "\\25BE"; content: "\\25BE" / ""; }
         details:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
 
-        /* Genie typing indicator */
+        /* Genie typing indicator: three dots bouncing in sequence */
         .typing-dots { display: flex; gap: 5px; align-items: center; height: 16px; padding: 2px 0; }
         .typing-dots span { width: 7px; height: 7px; border-radius: 50%; background: #80606D;
                             opacity: 0.3; animation: genie-bounce 1.2s infinite ease-in-out; }
@@ -589,9 +699,11 @@ app.index_string = """<!DOCTYPE html>
             0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
             40%           { opacity: 1;   transform: translateY(-4px); }
         }
+
+        /* Grayed-out chat input while Genie is answering */
         #genie-input[readonly] { background: #F0EAE6 !important; }
 
-        /* Respect reduced-motion preferences */
+        /* Turn off animation for users who prefer reduced motion */
         @media (prefers-reduced-motion: reduce) {
             .typing-dots span { animation: none; opacity: 0.7; }
             * { scroll-behavior: auto !important; transition: none !important; }
@@ -608,9 +720,13 @@ app.index_string = """<!DOCTYPE html>
 </body>
 </html>"""
 
+# ── Layout ──
+# Top to bottom: header, KPI cards, highlights, filters + map + detail panel,
+# Genie chat, bar charts, reviews and tips.
 app.layout = html.Div(
     style={"backgroundColor": BG, "fontFamily": SANS, "minHeight": "100vh", "color": TEXT_DARK},
     children=[
+        # First thing a keyboard user reaches; jumps past the header.
         html.A("Skip to main content", href="#main-content", className="skip-link"),
 
         # ── Header ──
@@ -625,16 +741,19 @@ app.layout = html.Div(
                     "margin": "14px 0 0", "opacity": "0.85"}),
         ]),
 
+        # tabIndex=-1 lets the skip link move focus here.
         html.Main(id="main-content", tabIndex="-1", style={"outline": "none"}, children=[
 
-            # ── KPI Row ──
+            # ── KPI cards ──
+            # The heading is hidden on screen but lets screen reader users
+            # jump to this section.
             html.Section(**{"aria-labelledby": "kpi-heading"}, children=[
                 html.H2("Key figures", id="kpi-heading", className="sr-only"),
                 html.Div(id="kpi-row", style={"display": "flex", "flexWrap": "wrap",
                                                "gap": "16px", "padding": "24px 40px 0"}),
             ]),
 
-            # ── Highlights Row ──
+            # ── Highlights ──
             html.Section(style={"padding": "16px 40px 0"},
                          **{"aria-labelledby": "highlights-heading"}, children=[
                 section_heading("Highlights", "highlights-heading"),
@@ -642,7 +761,7 @@ app.layout = html.Div(
                                                       "gap": "16px"}),
             ]),
 
-            # ── Main: Filters sidebar | Map + detail panel ──
+            # ── Filters sidebar | map | selected-business panel ──
             html.Div(style={"display": "flex", "flexWrap": "wrap", "gap": "20px",
                              "padding": "20px 40px", "alignItems": "flex-start"}, children=[
                 # ── Filters sidebar ──
@@ -695,12 +814,14 @@ app.layout = html.Div(
                            "Pick a business below or click a point to see its details.",
                            style={"color": TEXT_MED, "fontSize": "13px", "margin": "0 0 10px",
                                   "fontFamily": SANS}),
-                    # Keyboard- and screen-reader-friendly way to select a business,
-                    # doing the same thing as clicking the map or a bar.
+                    # Choosing a business here does the same as clicking the map
+                    # or a bar, but works with a keyboard and screen reader.
                     filter_field("Select a business", "business-picker",
                         dcc.Dropdown(id="business-picker", options=[], value=None,
                                      searchable=True, clearable=True,
                                      placeholder="Type to search businesses\u2026")),
+                    # The map is presented to screen readers as a single image;
+                    # the picker above is their way to choose a business.
                     html.Div(role="img",
                              **{"aria-label": "Map of businesses matching the current filters. "
                                               "Use the Select a business field to choose one."},
@@ -711,9 +832,11 @@ app.layout = html.Div(
                     ]),
                 ]),
 
-                # ── Selected-business panel (announced when it changes) ──
-                # Always in the layout (hidden when nothing is selected) so the
-                # close button has a fixed id and the width is set on the flex item itself.
+                # ── Selected-business panel ──
+                # Always in the layout and hidden with display:none when nothing
+                # is selected, so the close button always exists for callbacks.
+                # The contents are an aria-live region, so screen readers
+                # announce each new selection.
                 html.Section(id="detail-panel", style=DETAIL_PANEL_HIDDEN,
                              **{"aria-labelledby": "selected-heading"}, children=[
                     html.Div(style={"display": "flex", "justifyContent": "space-between",
@@ -735,21 +858,23 @@ app.layout = html.Div(
                 ]),
             ]),
 
-            # ── Genie Chat Section ──
+            # ── Genie chat ──
             html.Section(style={"padding": "0 40px 20px"},
                          **{"aria-labelledby": "genie-heading"}, children=[
                 section_heading("Ask Genie", "genie-heading"),
-                # Announces "thinking" and each answer to screen readers
+                # Hidden status line. Screen readers announce it when a question
+                # is sent and when the answer arrives.
                 html.Div(id="genie-status", className="sr-only", role="status",
                          **{"aria-live": "polite"}),
                 html.Div(style={"background": CARD, "border": f"1px solid {BORDER}",
                                  "borderRadius": "4px", "overflow": "hidden"}, children=[
-                    # Messages area (focusable so keyboard users can scroll it)
+                    # Message area. Focusable so keyboard users can scroll it.
                     html.Div(id="genie-messages", tabIndex="0", role="region",
                              **{"aria-label": "Genie conversation"}, style={
                         "padding": "24px", "minHeight": "160px", "maxHeight": "360px",
                         "overflowY": "auto", "background": HIGHLIGHT_BG,
                     }, children=[
+                        # Welcome message, hidden once the first question is sent.
                         html.Div(id="genie-welcome", style={"textAlign": "center", "padding": "32px 20px"}, children=[
                             html.Div("\u2728", style={"fontSize": "32px", "marginBottom": "12px"},
                                      **{"aria-hidden": "true"}),
@@ -760,10 +885,13 @@ app.layout = html.Div(
                                           "fontFamily": SANS, "maxWidth": "420px",
                                           "marginLeft": "auto", "marginRight": "auto"}),
                         ]),
+                        # Answered questions, rendered on the server from genie-history.
                         html.Div(id="genie-thread"),
+                        # The question being answered plus the typing indicator,
+                        # rendered in the browser.
                         html.Div(id="genie-pending-view"),
                     ]),
-                    # Input area
+                    # Question input and send button
                     html.Div(style={"display": "flex", "padding": "12px 16px", "gap": "10px",
                                      "borderTop": f"1px solid {BORDER}", "alignItems": "center"}, children=[
                         html.Label("Ask Genie a question", htmlFor="genie-input", className="sr-only"),
@@ -785,6 +913,15 @@ app.layout = html.Div(
                 ]),
             ]),
 
+            # ── Browser-side state ──
+            # chart-selection:    business_id of the selected business, or None
+            # genie-conv-id:      current Genie conversation, so follow-ups keep context
+            # genie-history:      chat messages as dicts (role, text, sql, rows, cols)
+            # genie-pending:      the question waiting for an answer; setting it
+            #                     triggers the server call
+            # genie-scroll-dummy,
+            # detail-focus-dummy: placeholder outputs for clientside callbacks
+            #                     that only have side effects
             dcc.Store(id="chart-selection", data=None),
             dcc.Store(id="genie-conv-id", data=None),
             dcc.Store(id="genie-history", data=[]),
@@ -792,7 +929,7 @@ app.layout = html.Div(
             dcc.Store(id="genie-scroll-dummy"),
             dcc.Store(id="detail-focus-dummy"),
 
-            # ── Business Charts ──
+            # ── Bar charts ──
             html.Section(style={"padding": "0 40px 20px"},
                          **{"aria-labelledby": "charts-heading"}, children=[
                 section_heading("Business charts", "charts-heading", extra_style={"margin": "0 0 12px"}),
@@ -809,7 +946,7 @@ app.layout = html.Div(
                 ]),
             ]),
 
-            # ── Reviews & Tips ──
+            # ── Reviews and tips ──
             html.Section(style={"padding": "0 40px 40px"},
                          **{"aria-labelledby": "reviews-heading"}, children=[
                 html.Div(style={"display": "flex", "justifyContent": "space-between",
@@ -826,7 +963,7 @@ app.layout = html.Div(
 )
 
 
-# ── Callback: filters + selection -> KPIs, map, highlights, reviews ──
+# ── Callback: filters or selection change → KPIs, map, highlights, reviews ──
 @app.callback(
     Output("kpi-row", "children"),
     Output("map-graph", "figure"),
@@ -843,8 +980,10 @@ app.layout = html.Div(
     Input("chart-selection", "data"),
 )
 def update_dashboard(name_query, categories, subcategories, cities, states, min_rating, min_reviews, selection):
+    """Rebuild the KPI cards, map, highlight cards and review list."""
     filtered = apply_filters(name_query, categories, subcategories, cities, states, min_rating, min_reviews)
 
+    # KPI cards
     n = len(filtered)
     avg_r = filtered["rating"].mean() if n else 0
     tot_rev = int(filtered["review_count"].sum())
@@ -858,6 +997,9 @@ def update_dashboard(name_query, categories, subcategories, cities, states, min_
         kpi_card("Total visits", f"{tot_chk:,}", f"{tot_chk // max(n, 1)} average per business"),
     ]
 
+    # Map: one point per business that has coordinates, colored by category.
+    # Point size uses the square root of the review count so the busiest
+    # businesses don't swamp everything else.
     map_df = filtered.dropna(subset=["latitude", "longitude"]).copy()
     if len(map_df) > 0:
         map_df["_size"] = np.sqrt(map_df["review_count"].fillna(0).clip(lower=1)) + 2
@@ -881,7 +1023,7 @@ def update_dashboard(name_query, categories, subcategories, cities, states, min_
         )
         fig.update_layout(
             margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=CARD,
-            # Legend is now shown so category colors can be decoded without hovering.
+            # The legend lets users read the category colors without hovering.
             showlegend=True,
             legend=dict(title=dict(text="Category", font=dict(size=12, color=TEXT_DARK)),
                         bgcolor="rgba(255,255,255,0.92)", bordercolor=BORDER, borderwidth=1,
@@ -893,12 +1035,14 @@ def update_dashboard(name_query, categories, subcategories, cities, states, min_
                              lon=map_df["longitude"].mean()),
         )
     else:
+        # Nothing to plot: show an empty map centered on the continental US.
         fig = px.scatter_map(
             pd.DataFrame({"lat": [39.5], "lon": [-98.35]}),
             lat="lat", lon="lon", zoom=3, map_style=MAP_STYLE)
         fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=CARD, showlegend=False)
 
-    # ── Highlight selected business on map ──
+    # If a business is selected, fade the other points, draw a larger pin on
+    # top of it, and zoom in on it.
     if selection and len(map_df) > 0:
         sel_df = map_df[map_df["business_id"] == selection]
         if len(sel_df) > 0:
@@ -921,6 +1065,8 @@ def update_dashboard(name_query, categories, subcategories, cities, states, min_
                 map_zoom=13,
             )
 
+    # Highlight cards: top rated (ties go to the one with more reviews), most
+    # reviewed and most visited.
     highlights = []
     if n > 0:
         top = filtered.sort_values(["rating", "review_count"], ascending=[False, False]).iloc[0]
@@ -935,7 +1081,10 @@ def update_dashboard(name_query, categories, subcategories, cities, states, min_
                            f"{most_act['checkin_count']:,} visits \u00b7 {most_act['city']}"),
         ]
 
-    # ── Review cards: live query filtered to the current business set ──
+    # Reviews are queried live: the newest 50 for the selected business, or for
+    # all filtered businesses if nothing is selected. A selection is only used
+    # if it's in the filtered set, so every ID put into the SQL comes from the
+    # business table rather than from the browser.
     filtered_ids = list(filtered["business_id"])
     selected_ids = [selection] if selection and selection in set(filtered_ids) else filtered_ids
     if selected_ids:
@@ -965,31 +1114,36 @@ def update_dashboard(name_query, categories, subcategories, cities, states, min_
     return kpis, fig, highlights, cards, count_text
 
 
-# ── Callback: selection -> side detail panel (contents + show/hide) ──
+# ── Callback: selection → detail panel contents and visibility ──
 @app.callback(
     Output("click-detail", "children"),
     Output("detail-panel", "style"),
     Input("chart-selection", "data"),
 )
 def show_click_detail(selection):
+    """Fill in and show the detail panel for the selected business, or hide
+    the panel when nothing is selected."""
     if not selection:
         return None, DETAIL_PANEL_HIDDEN
     sel_df = df[df["business_id"] == selection]
     if len(sel_df) == 0:
         return None, DETAIL_PANEL_HIDDEN
 
+    # Missing values show as blank (or N/A for subcategories) rather than "nan".
     row = sel_df.iloc[0]
     safe_addr = str(row["address"]) if pd.notna(row["address"]) and row["address"] else ""
     safe_postal = str(row["postal_code"]) if pd.notna(row["postal_code"]) and row["postal_code"] else ""
     safe_subcats = str(row["subcategories"]) if pd.notna(row["subcategories"]) and row["subcategories"] else "N/A"
 
     def fmt_num(v):
+        """Format a count with thousands separators, or return it as-is."""
         try:
             return f"{int(float(v)):,}"
         except (ValueError, TypeError):
             return str(v)
 
     def detail_row(label, value):
+        """One label/value pair in the panel's description list."""
         return html.Div(style={"marginBottom": "14px"}, children=[
             html.Dt(label, style={"color": TEXT_LIGHT, "fontSize": "12px", "fontWeight": "600",
                     "textTransform": "uppercase", "letterSpacing": "1px", "margin": "0 0 4px",
@@ -1018,7 +1172,7 @@ def show_click_detail(selection):
     return contents, DETAIL_PANEL_STYLE
 
 
-# ── Callback: business picker options (search-as-you-type, respects filters) ──
+# ── Callback: options for the business picker ──
 @app.callback(
     Output("business-picker", "options"),
     Input("business-picker", "search_value"),
@@ -1033,12 +1187,15 @@ def show_click_detail(selection):
 )
 def update_picker_options(search, name_query, categories, subcategories, cities, states,
                           min_rating, min_reviews, current):
+    """List businesses that match the filters and whatever is typed in the
+    picker, top 50 by review count. The list is capped to stay fast; typing
+    narrows it. The current selection is always kept so the picker can still
+    display it."""
     filtered = apply_filters(name_query, categories, subcategories, cities, states,
                              min_rating, min_reviews)
     if search:
         filtered = filtered[filtered["business_name"].str.contains(
             search, case=False, na=False, regex=False)]
-    # Cap the list so large datasets stay fast; typing narrows it further.
     top = filtered.nlargest(50, "review_count")
     if current and current not in set(top["business_id"]):
         top = pd.concat([df[df["business_id"] == current], top])
@@ -1046,16 +1203,26 @@ def update_picker_options(search, name_query, categories, subcategories, cities,
              "value": r["business_id"]} for _, r in top.iterrows()]
 
 
-# ── Callback: Genie chat, step 1 (instant, runs in the browser) ──
-# The input is set to read-only rather than disabled while Genie is thinking,
-# so keyboard focus stays in it. Extra sends are ignored until the answer lands.
+# ── Genie chat ──
+# Asking a question happens in two steps so the page responds instantly:
+#   1. This clientside callback runs in the browser. It shows the question and
+#      a typing indicator, clears and locks the input, and writes the question
+#      to the genie-pending store.
+#   2. fetch_genie_answer (below) runs on the server whenever genie-pending
+#      changes. It calls Genie, adds the answer to the history and unlocks the
+#      input.
+# The input is made read-only rather than disabled while waiting, so keyboard
+# focus stays in it. Any sends in the meantime are ignored.
+# The __NAME__ placeholders in the JavaScript are filled with theme values below.
 GENIE_SEND_JS = """
 function(n_clicks, n_submit, question) {
     const nu = window.dash_clientside.no_update;
     var inputEl = document.getElementById('genie-input');
+    // Ignore sends while an answer is pending, and ignore empty questions.
     if (inputEl && inputEl.readOnly) { return [nu, nu, nu, nu, nu, nu]; }
     var q = (inputEl ? inputEl.value : (question || '')).trim();
     if (!q) { return [nu, nu, nu, nu, nu, nu]; }
+    // Shorthand for building a Dash html component in JavaScript.
     const el = (type, props) => ({type: type, namespace: 'dash_html_components', props: props});
 
     const userBubble = el('Div', {
@@ -1081,12 +1248,12 @@ function(n_clicks, n_submit, question) {
     });
 
     return [
-        [userBubble, thinking],           // genie-pending-view
-        '',                               // clear the input
-        {question: q, ts: Date.now()},    // hand off to step 2
-        true,                             // input read-only while waiting
-        {display: 'none'},                // hide the welcome message
-        'Question sent. Genie is working on an answer.'   // screen reader status
+        [userBubble, thinking],           // genie-pending-view: question + typing dots
+        '',                               // genie-input: clear it
+        {question: q, ts: Date.now()},    // genie-pending: triggers step 2 (ts makes repeat questions count as a change)
+        true,                             // genie-input read-only while waiting
+        {display: 'none'},                // genie-welcome: hide
+        'Question sent. Genie is working on an answer.'   // genie-status: screen reader announcement
     ];
 }
 """
@@ -1123,6 +1290,9 @@ app.clientside_callback(
     prevent_initial_call=True,
 )
 def fetch_genie_answer(pending, conv_id, history):
+    """Ask Genie the pending question, add the question and answer to the
+    history, and redraw the thread. Also clears the pending view, unlocks the
+    input and announces the answer to screen readers."""
     if not pending or not pending.get("question"):
         return (no_update,) * 6
 
@@ -1146,7 +1316,9 @@ def fetch_genie_answer(pending, conv_id, history):
     return _render_history(history), history, new_conv_id, None, False, status
 
 
-# ── Clientside: keep the chat scrolled to the newest message ──
+# ── Clientside: scroll the chat to the newest message ──
+# Runs whenever the thread or pending view changes. The short delay lets the
+# new message render before scrolling.
 app.clientside_callback(
     """
     function(thread, pending) {
@@ -1164,7 +1336,7 @@ app.clientside_callback(
 )
 
 
-# ── Callback: filters + selection -> 3 bar charts and their table versions ──
+# ── Callback: filters or selection change → bar charts and their tables ──
 @app.callback(
     Output("chart-rated", "figure"),
     Output("chart-visited", "figure"),
@@ -1183,10 +1355,14 @@ app.clientside_callback(
 )
 def update_charts(name_query, categories, subcategories, cities, states,
                   min_rating, min_reviews, selection):
+    """Build the top-10 charts by rating (ties go to the one with more
+    reviews), visits and reviews, plus a table version of each."""
     filtered = apply_filters(name_query, categories, subcategories,
                              cities, states, min_rating, min_reviews)
     sel = selection if selection else None
 
+    # Each top 10 is re-sorted ascending because Plotly draws horizontal bars
+    # from the bottom up; this puts the largest bar at the top.
     top_rated = (filtered
                  .sort_values(["rating", "review_count"], ascending=[False, False])
                  .head(10)
@@ -1211,11 +1387,10 @@ def update_charts(name_query, categories, subcategories, cities, states,
     )
 
 
-# ── Callback: chart/map click, business picker, close button, or filter change
-#    -> cross-filter store (and keep the picker in sync) ──
-# Closing the panel or changing a filter also resets every chart's and the map's
-# clickData. Without that, a graph keeps its last click, so clicking the same
-# business again after closing wouldn't register as a new selection.
+# ── Callback: decide which business is selected ──
+# Clicking the map or a bar, or choosing in the picker, selects a business (and
+# keeps the picker in sync). Closing the panel or changing any filter clears
+# the selection.
 @app.callback(
     Output("chart-selection", "data"),
     Output("business-picker", "value"),
@@ -1240,10 +1415,18 @@ def update_charts(name_query, categories, subcategories, cities, states,
 )
 def handle_selection(click_rated, click_visited, click_reviewed, map_click, picked, clear_clicks,
                      name_query, categories, subcategories, cities, states, min_rating, min_reviews):
+    """Update the selection based on whichever input fired.
+
+    Returns (selection, picker value, rated/visited/reviewed chart clickData,
+    map clickData).
+    """
     triggered = dash.ctx.triggered_id
     nu = no_update
     clear_all = (None, None, None, None, None, None)
 
+    # Clearing also resets every graph's clickData. A graph otherwise
+    # remembers its last click, so clicking the same business again after
+    # closing the panel wouldn't count as a new click.
     filter_ids = {
         "filter-name", "filter-category", "filter-subcategory", "filter-city",
         "filter-state", "filter-rating", "filter-min-reviews",
@@ -1251,6 +1434,7 @@ def handle_selection(click_rated, click_visited, click_reviewed, map_click, pick
     if triggered in filter_ids or triggered == "clear-selection":
         return clear_all
 
+    # The picker already shows the choice; only the selection needs updating.
     if triggered == "business-picker":
         return picked, nu, nu, nu, nu, nu
 
@@ -1262,16 +1446,18 @@ def handle_selection(click_rated, click_visited, click_reviewed, map_click, pick
     }
     click_data = click_map.get(triggered)
     if not click_data or not click_data.get("points"):
-        # clickData was just reset to None by this callback; nothing to select.
+        # Fired because this callback just reset clickData to None; nothing to select.
         return nu, nu, nu, nu, nu, nu
+    # The first custom_data value on every bar and map point is the business_id.
     cd = click_data["points"][0].get("customdata", [])
     if not cd:
         return nu, nu, nu, nu, nu, nu
     return cd[0], cd[0], nu, nu, nu, nu
 
 
-# ── Clientside: after closing the panel, move keyboard focus somewhere sensible
-#    (the business picker) instead of losing it when the panel disappears ──
+# ── Clientside: move focus after the panel closes ──
+# The close button disappears along with the panel, which would drop keyboard
+# focus back to the top of the page. Move it to the business picker instead.
 app.clientside_callback(
     """
     function(n) {
