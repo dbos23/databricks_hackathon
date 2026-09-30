@@ -1,0 +1,6 @@
+command: ['npm', 'run', 'start']
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: DATABRICKS_GENIE_SPACE_ID
+    value: "01f1b8f39ea115aabb24013a946478b9"
