@@ -1,80 +1,30 @@
-# Databricks App Templates
+# Databricks Hackathon
+This repository stores all the code for the team Genieology in The Information Lab's Databricks Hackathon. The hackathon is primarily focused on AI and BI. The members of Genieology are @sitapawar (responsible for the Overview App), @jacob-aronson-data (responsible for the Business Analyst App), and @dbos23 (responsible for the data engineering pipeline and Genie Agent).
 
-Pre-built templates for creating [Databricks Apps](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/).
+# Project Overview
+We used the [Yelp open dataset](https://business.yelp.com/data/resources/open-dataset/) for our project. The premise is that Blanche Lifestyle Magazine (a fictional magazine based in New Orleans) is considering using Databricks and the paid Yelp API to better be able to write informed articles for their readers. This project is intended as a proof of concept of the value of both the data and of the functionality of Databricks.
 
-See [Create an App from a Template](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/create-app-template) to get started.
+Our project comprised the following components:
+- Data engineering pipeline
+- Two Databricks apps written in Python and JavaScript respectively
+- Genie agent
 
-## Templates
+## Data Engineering Pipeline
+The data consisted of five JSON files and [one CSV file](https://www.kaggle.com/datasets/scott31/yelp-dataset-metro-areas). Our pipeline turned those files into analysis-ready tables through the following process:
+1. Loaded the JSON files into an Amazon S3 bucket
+2. Ingested those files into Databricks tables using the native Databricks S3 connector
+3. Transformed the raw data according to the medallion architecture using a Spark Declarative Pipeline. This was initially done with SQL. In the spirit of the hackathon's core purpose — advancing our own learning — this was then replicated using PySpark
 
-### Hello World
+## Overview App
+This is an interactive dashboard coded in Python and deployed as a Databricks app. Its intended purpose is to give a broad overview of the data and help its users to narrow down their search for the best businesses in New Orleans for their needs. It was created with adherence to a style guide that was also used in the other app and the Genie Agent.
 
-| Template | Description | Dependencies |
-|----------|-------------|--------------|
-| `streamlit-hello-world-app` | Simple Streamlit app | None |
-| `dash-hello-world-app` | Simple Dash app | None |
-| `gradio-hello-world-app` | Simple Gradio app | None |
-| `shiny-hello-world-app` | Simple Shiny app | None |
-| `flask-hello-world-app` | Simple Flask app | None |
-| `nodejs-fastapi-hello-world-app` | Simple Node.js app | None |
+For more information about the Overview App see [README](./overview_app/README.md).
 
-### Agents
+## Business Analyst App
+Similar to the Overview app, the Business Analyst app is a dashboard deployed as a Databricks app, this time written in JavaScript. It serves to give the user more detailed information on specific businesses and uses the same style guide as the Overview app.
 
-| Template | Description | Dependencies |
-|----------|-------------|--------------|
-| `agent-langgraph` | A conversational agent using LangGraph and MLflow AgentServer | MLflow experiment |
-| `agent-langgraph-advanced` | LangGraph agent with short-term memory, long-term memory, and long-running background tasks | MLflow experiment, Database |
-| `agent-openai-agents-sdk` | A conversational agent using OpenAI Agents SDK and MLflow AgentServer | MLflow experiment |
-| `agent-openai-advanced` | OpenAI Agents SDK agent with short-term memory and long-running background tasks | MLflow experiment, Database |
-| `agent-openai-agents-sdk-multiagent` | Multi-agent orchestrator using OpenAI Agents SDK with Genie and serving endpoint subagents | MLflow experiment |
-| `agent-non-conversational` | A non-conversational agent that processes structured questions and provides answers with detailed reasoning | MLflow experiment |
-| `agent-migration-from-model-serving` | Template for migrating a ResponsesAgent from Model Serving to Databricks Apps | MLflow experiment |
-| `e2e-chatbot-app-next` | A chat UI that queries a remote agent endpoint or foundation model | Serving endpoint |
-| `mcp-server-hello-world` | A basic MCP server | None |
-| `mcp-server-open-api-spec` | An MCP server that exposes REST API operations from an OpenAPI specification stored in a Unity Catalog volume | UC volume |
-
-### Dashboard
-
-| Template | Description | Dependencies |
-|----------|-------------|--------------|
-| `streamlit-data-app` | An app that reads from a SQL warehouse and visualizes data | SQL warehouse |
-| `dash-data-app` | An app that reads from a SQL warehouse and visualizes data | SQL warehouse |
-| `gradio-data-app` | An app that reads from a SQL warehouse and visualizes data | SQL warehouse |
-| `shiny-data-app` | An app that reads from a SQL warehouse and visualizes data | SQL warehouse |
-
-### Database
-
-| Template | Description | Dependencies |
-|----------|-------------|--------------|
-| `streamlit-database-app` | A todo app that stores tasks in a Postgres database hosted on Databricks | Database |
-| `dash-database-app` | A todo app that stores tasks in a Postgres database hosted on Databricks | Database |
-| `flask-database-app` | A todo app that stores tasks in a Postgres database hosted on Databricks | Database |
-
-### AppKit
-
-A collection of templates for building full-stack Databricks Apps with [AppKit](https://github.com/databricks/appkit).
-
-<!-- appkit-start -->
-
-| Template | Description | Dependencies |
-|----------|-------------|--------------|
-| `appkit-all-in-one` | Full-stack Node.js app with SQL analytics dashboards, file browser, Genie AI conversations, Lakebase Autoscaling (Postgres) CRUD, and Model Serving | SQL warehouse, Volume, Genie Space, Database, Serving Endpoint |
-| `appkit-analytics` | Node.js app with SQL analytics dashboards and charts | SQL warehouse |
-| `appkit-genie` | Node.js app with AI/BI Genie for natural language data queries | Genie Space |
-| `appkit-files` | Node.js app with file browser for Databricks Volumes | Volume |
-| `appkit-serving` | Node.js app with Databricks Model Serving endpoint integration | Serving Endpoint |
-| `appkit-lakebase` | Node.js app with Lakebase Autoscaling (Postgres) CRUD operations | Database |
-
-<!-- appkit-end -->
-
-### Showcase Examples
-
-End-to-end example apps that bundle a full Databricks App with seed data, SQL queries, and (where applicable) Lakeflow pipelines and provisioning scripts. See each template's `README.md` for the runbook.
-
-| Template | Description | Dependencies |
-|----------|-------------|--------------|
-| `agentic-support-console` | End-to-end AI-powered support console combining Lakebase, Lakehouse Sync, a medallion pipeline, an LLM agent job, reverse sync, and a Databricks App with Genie analytics. | SQL warehouse, Database, Genie Space, MLflow experiment |
-| `content-moderator` | Internal content moderation tool with per-channel guidelines, AI-powered compliance scoring via Model Serving, and a moderator review workflow backed by Lakebase and Genie analytics. | SQL warehouse, Database, Genie Space, Serving endpoint |
-| `inventory-intelligence` | Retail inventory management with AI-powered demand forecasting, replenishment recommendations, and optional Genie analytics. Built on a live medallion pipeline synced to Lakebase. | SQL warehouse, Database, Genie Space |
-| `rag-chat` | Streaming Retrieval-Augmented Generation chat app with pgvector retrieval from Lakebase, Wikipedia seed corpus, Model Serving generation, and Lakebase-backed chat history. Consumed via `databricks apps init`. | Database, Serving endpoint |
-| `saas-tracker` | Internal tool for tracking team SaaS subscriptions, owners, costs, and renewals with Lakebase persistence and Genie spend analytics. | SQL warehouse, Database, Genie Space |
-| `vacation-rentals` | Vacation rental ops dashboard with revenue analytics from a SQL Warehouse, a booking queue with Lakebase-backed flags and agent notes, and an embedded Genie chat panel. | SQL warehouse, Database, Genie Space |
+## Genie Agent
+One of the main reasons we chose the Yelp data is because it afforded opportunities for the analysis of both structured and unstructured data. Embedding a Genie Agent in the apps we created allows us to give users more flexibility in their analysis and to better understand the unstructured text data of the reviews and tips in a way they couldn't with traditional analytics. The steps we took to create the Genie Agent were as follows:
+1. Created an AI Search index on the Yelp reviews and tips. This allowed the Genie Agent to effectively search through unstructured text data to find information relevant to a user's question and avoided the need to depend on unreliable keyword searches
+2. Created a metric view of the structured data pertaining to the businesses. This provided the Genie Agent with the context to properly query the tables without simply guessing at their structure and meaning
+3. Added Markdown instructions to guide the Genie Agent's responses. These explained the purpose the agent served, when to use each source (the AI Search index or the metric view), and the style guide to which it should adhere so its visualizations would be consistent with those of the apps
