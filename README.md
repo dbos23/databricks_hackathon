@@ -20,8 +20,8 @@ This is an interactive dashboard coded in Python and deployed as a Databricks ap
 
 For more information about the Overview App see [README](./overview_app/README.md).
 
-## Business Analyst App
-Similar to the Overview app, the Business Analyst app is a dashboard deployed as a Databricks app, this time written in JavaScript. It serves to give the user more detailed information on specific businesses and uses the same style guide as the Overview app.
+## Business Drilldown App
+Similar to the Overview app, the Business Drilldown app is a dashboard deployed as a Databricks app, this time written in JavaScript. It serves to give the user more detailed information on specific businesses and uses the same style guide as the Overview app.
 
 ## Genie Agent
 One of the main reasons we chose the Yelp data is because it afforded opportunities for the analysis of both structured and unstructured data. Embedding a Genie Agent in the apps we created allows us to give users more flexibility in their analysis and to better understand the unstructured text data of the reviews and tips in a way they couldn't with traditional analytics. The steps we took to create the Genie Agent were as follows:
