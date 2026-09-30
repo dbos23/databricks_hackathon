@@ -1,5 +1,5 @@
 # Databricks Hackathon
-This repository stores all the code for the team Genieology in The Information Lab's Databricks Hackathon. The hackathon is primarily focused on AI and BI. The members of Genieology are @sitapawar, @jacob-aronson-data, and @dbos23.
+This repository stores all the code for the team Genieology in The Information Lab's Databricks Hackathon. The hackathon is primarily focused on AI and BI. The members of Genieology are @sitapawar (responsible for the Overview App), @jacob-aronson-data (responsible for the Business Analyst App), and @dbos23 (responsible for the data engineering pipeline and Genie Agent).
 
 # Project Overview
 We used the [Yelp open dataset](https://business.yelp.com/data/resources/open-dataset/) for our project. The premise is that Blanche Lifestyle Magazine (a fictional magazine based in New Orleans) is considering using Databricks and the paid Yelp API to better be able to write informed articles for their readers. This project is intended as a proof of concept of the value of both the data and of the functionality of Databricks.
