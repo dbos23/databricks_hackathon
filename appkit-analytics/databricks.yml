@@ -1,0 +1,46 @@
+bundle:
+  name: appkit-analytics
+
+variables:
+  sql_warehouse_id:
+    description: SQL Warehouse ID
+  genie_space_id:
+    description: Genie Space ID
+  genie_space_name:
+    description: Genie Space name
+
+resources:
+  apps:
+    app:
+      name: "appkit-analytics"
+      description: "Node.js app with SQL analytics dashboards and charts"
+      source_code_path: ./
+
+      # Start the app automatically on deploy.
+      lifecycle:
+        started: true
+      # On-behalf-of user API scopes: queries execute as the logged-in user
+      user_api_scopes:
+        - sql
+        - dashboards.genie
+
+      # The resources which this app has access to.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: CAN_USE
+        - name: genie-space
+          genie_space:
+            name: ${var.genie_space_name}
+            space_id: ${var.genie_space_id}
+            permission: CAN_RUN
+
+targets:
+  dev:
+    default: true
+
+    variables:
+      sql_warehouse_id: placeholder
+      genie_space_id: 01f1b38a9d32139d836b503b2ea8b1c0
+      genie_space_name: Yelp Review Insights
